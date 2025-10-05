@@ -10,62 +10,42 @@ import {
 } from "react-native";
 import AddTodo from "../components/addTodo/AddTodo";
 import TodoItem from "../components/todoItem/TodoItem";
-import { useTodoState } from "../context/TodoContext";
+import { useAppDispatch, useAppSelector } from "../store/hooks";
+import type { RootState } from "../store/store";
+import { persistTodos } from "../store/todosSlice";
 import { Todo } from "../types";
 import { styles } from "./HomeScreen.styles";
-import * as LocalAuthentication from "expo-local-authentication";
 import * as IntentLauncher from "expo-intent-launcher";
+import { isBiometricAvailable } from "../services/auth";
+import {
+  isSessionAuthenticated,
+  setSessionAuthenticated,
+  addAuthListener,
+  removeAuthListener,
+  ensureSessionAuth,
+} from "../services/session";
 
 /** Persist for this app process (prevents re-prompt after remounts) */
-let SESSION_PROMPTED = false;
-let SESSION_AUTHENTICATED = false;
-
 export default function HomeScreen() {
-  const { todos } = useTodoState();
+  const todos = useAppSelector((s: RootState) => s.todos.todos);
+  const dispatch = useAppDispatch();
 
   const [editingTodo, setEditingTodo] = useState<Todo | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean>(
-    SESSION_AUTHENTICATED
+    isSessionAuthenticated()
   );
   const [needsSetup, setNeedsSetup] = useState(false); // show button when user skipped / no lock
 
-  const runInitialAuthOnce = async () => {
-    if (SESSION_PROMPTED) {
-      setAuthenticated(SESSION_AUTHENTICATED);
-      return;
-    }
-    SESSION_PROMPTED = true;
-
-    try {
-      const result = await LocalAuthentication.authenticateAsync({
-        promptMessage: "Unlock to access your todos",
-        fallbackLabel: "Enter PIN/Password",
-        cancelLabel: "Cancel",
-        disableDeviceFallback: false as any,
-      });
-
-      if (result.success) {
-        SESSION_AUTHENTICATED = true;
-        setAuthenticated(true);
-        setNeedsSetup(false);
-      } else {
-        SESSION_AUTHENTICATED = false;
-        setAuthenticated(false);
-        setNeedsSetup(
-          result.error === "not_enrolled" || result.error === "not_available"
-        );
-      }
-    } catch (e) {
-      console.warn("Authentication failed", e);
-      SESSION_AUTHENTICATED = false;
-      setAuthenticated(false);
-      setNeedsSetup(true);
-    }
-  };
-
   useEffect(() => {
-    runInitialAuthOnce();
+    // subscribe to session auth changes
+    const off = addAuthListener((v) => setAuthenticated(v));
+    return () => off();
   }, []);
+
+  // persist when todos change (and after loaded) - debounce not necessary for small app
+  useEffect(() => {
+    dispatch(persistTodos(todos));
+  }, [todos, dispatch]);
 
   const goToSettings = async () => {
     try {
@@ -84,9 +64,7 @@ export default function HomeScreen() {
 
   // NEW: Logout / Lock app
   const lockApp = () => {
-    SESSION_PROMPTED = false; // allow prompting again
-    SESSION_AUTHENTICATED = false; // reset session auth
-    setAuthenticated(false);
+    setSessionAuthenticated(false);
     // don't auto-prompt; let user choose "Unlock now"
   };
 
@@ -95,17 +73,28 @@ export default function HomeScreen() {
       <View style={styles.container}>
         {/* Top row: Lock/Unlock controls */}
         <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "flex-end",
-            gap: 12,
-            marginBottom: 8,
-          }}
+          style={[
+            { flexDirection: "row", justifyContent: "flex-end", gap: 12 },
+            styles.topControls,
+          ]}
         >
           {authenticated ? (
             <Button title="Lock app (Logout)" onPress={lockApp} />
           ) : (
-            <Button title="Unlock now" onPress={runInitialAuthOnce} />
+            <Button
+              title="Unlock now"
+              onPress={async () => {
+                // proactively prompt device auth so user can unlock without performing an op
+                const ok = await ensureSessionAuth(
+                  "Unlock to access your todos"
+                );
+                if (!ok) {
+                  // show setup when biometric unavailable
+                  const avail = await isBiometricAvailable();
+                  setNeedsSetup(!avail);
+                }
+              }}
+            />
           )}
         </View>
 
@@ -125,6 +114,9 @@ export default function HomeScreen() {
           editingTodo={editingTodo}
           clearEditing={() => setEditingTodo(null)}
           authenticated={authenticated}
+          onAuthenticated={() => {
+            setSessionAuthenticated(true);
+          }}
         />
 
         {/* Show only when user didn't unlock or no lock set */}

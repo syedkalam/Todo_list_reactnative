@@ -1,20 +1,24 @@
 import React, { useEffect, useState } from "react";
-import { View, TextInput, Button, Alert } from "react-native";
-import { useTodoDispatch } from "../../context/TodoContext";
+import { View, TextInput, Pressable, Text, Alert } from "react-native";
+import { useAppDispatch } from "../../store/hooks";
+import { add, update } from "../../store/todosSlice";
 import { Todo } from "../../types";
+import { ensureSessionAuth } from "../../services/session";
 import { styles } from "./AddTodo.styles";
 
 export default function AddTodo({
   editingTodo,
   clearEditing,
   authenticated,
+  onAuthenticated,
 }: {
   editingTodo: Todo | null;
   clearEditing: () => void;
   authenticated: boolean;
+  onAuthenticated?: () => void;
 }) {
   const [text, setText] = useState(editingTodo?.title ?? "");
-  const dispatch = useTodoDispatch();
+  const dispatch = useAppDispatch();
 
   useEffect(() => {
     setText(editingTodo?.title ?? "");
@@ -28,37 +32,45 @@ export default function AddTodo({
     }
 
     if (!authenticated) {
-      Alert.alert(
-        "Not authenticated",
-        "Please unlock the app before adding/updating todos."
-      );
-      return;
+      const ok = await ensureSessionAuth("Unlock to add todo");
+      if (!ok) {
+        Alert.alert("Not authenticated", "Authentication failed or cancelled");
+        return;
+      }
+      // notify parent that session is authenticated
+      try {
+        onAuthenticated && onAuthenticated();
+      } catch (e) {}
     }
 
     if (editingTodo) {
-      dispatch({
-        type: "UPDATE",
-        payload: { id: editingTodo.id, title: trimmed },
-      });
+      dispatch(update({ id: editingTodo.id, title: trimmed }));
       clearEditing();
     } else {
-      dispatch({ type: "ADD", payload: { title: trimmed } });
+      dispatch(add({ title: trimmed }));
     }
 
+    // persist current list - best-effort; store will be picked up by selector in parent
+    // Note: we don't have todos here without selector, caller (HomeScreen) triggers reload/persist as needed.
     setText("");
   };
 
   return (
     <View style={styles.container}>
-      <TextInput
-        placeholder={editingTodo ? "Edit todo..." : "Add a todo..."}
-        value={text}
-        onChangeText={setText}
-        style={styles.input}
-        onSubmitEditing={onSubmit}
-      />
-      <Button title={editingTodo ? "Update" : "Add"} onPress={onSubmit} />
-      {editingTodo && <Button title="Cancel" onPress={clearEditing} />}
+      <View style={styles.inputWrap}>
+        <TextInput
+          placeholder={editingTodo ? "Edit todo..." : "Add a todo..."}
+          value={text}
+          onChangeText={setText}
+          style={styles.input}
+          onSubmitEditing={onSubmit}
+          returnKeyType="done"
+        />
+      </View>
+
+      <Pressable style={styles.addButton} onPress={onSubmit}>
+        <Text style={styles.addButtonText}>{editingTodo ? "OK" : "ADD"}</Text>
+      </Pressable>
     </View>
   );
 }

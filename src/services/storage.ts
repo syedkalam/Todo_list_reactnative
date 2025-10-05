@@ -1,8 +1,4 @@
-/**
- * storage.ts
- * Simple secure store wrapper
- * We store the entire todos array as JSON under key "secure_todos_v1"
- */
+ 
 
 import * as SecureStore from 'expo-secure-store';
 import { Todo } from '../types';
