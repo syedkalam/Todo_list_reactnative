@@ -8,7 +8,6 @@ import {
   Button,
   Linking,
   AppState,
-  Alert,
 } from "react-native";
 import AddTodo from "../components/addTodo/AddTodo";
 import TodoItem from "../components/todoItem/TodoItem";
@@ -18,12 +17,11 @@ import { persistTodos } from "../store/todosSlice";
 import { Todo } from "../types";
 import { styles } from "./HomeScreen.styles";
 import * as IntentLauncher from "expo-intent-launcher";
-import { isBiometricAvailable } from "../services/auth";
+import { isAuthAvailable } from "../services/auth";
 import {
   isSessionAuthenticated,
   setSessionAuthenticated,
   addAuthListener,
-  removeAuthListener,
   ensureSessionAuth,
 } from "../services/session";
 
@@ -49,13 +47,13 @@ export default function HomeScreen() {
   // On mount: check whether device has biometric or PIN setup. If not, prompt user to go to settings and hide todo UI.
   useEffect(() => {
     let mounted = true;
+
     (async () => {
       try {
-        const avail = await isBiometricAvailable();
+        const avail = await isAuthAvailable();
         if (!mounted) return;
         setNeedsSetup(!avail);
-      } catch (e) {
-        // assume needs setup if check fails
+      } catch {
         if (!mounted) return;
         setNeedsSetup(true);
       }
@@ -71,9 +69,9 @@ export default function HomeScreen() {
         if (openedSettingsRef.current) {
           openedSettingsRef.current = false;
           try {
-            const avail = await isBiometricAvailable();
+            const avail = await isAuthAvailable();
             setNeedsSetup(!avail);
-          } catch (e) {
+          } catch {
             setNeedsSetup(true);
           }
           return;
@@ -88,10 +86,10 @@ export default function HomeScreen() {
           }
 
           // If authentication failed or was cancelled, check whether device truly lacks auth
-          const avail = await isBiometricAvailable();
+          const avail = await isAuthAvailable();
           // only show the "go to settings" CTA when the device does not have auth enrolled
           setNeedsSetup(!avail);
-        } catch (e) {
+        } catch {
           // on error, conservatively show the settings CTA
           setNeedsSetup(true);
         }
@@ -102,11 +100,13 @@ export default function HomeScreen() {
       mounted = false;
       try {
         sub.remove();
-      } catch (e) {}
+      } catch {
+        // ignore
+      }
     };
   }, []);
 
-  // persist when todos change (and after loaded) - debounce not necessary for small app
+  // persist when todos change (and after loaded)
   useEffect(() => {
     dispatch(persistTodos(todos));
   }, [todos, dispatch]);
@@ -115,7 +115,7 @@ export default function HomeScreen() {
     try {
       // Only navigate to settings if device does not have auth enrolled.
       // This prevents opening Settings unnecessarily and triggering auth popups.
-      const avail = await isBiometricAvailable();
+      const avail = await isAuthAvailable();
       if (avail) {
         // If device auth is already present, prompt the user to authenticate
         // (do not navigate to Settings). This allows unlocking instead of opening Settings.
@@ -126,14 +126,13 @@ export default function HomeScreen() {
         }
 
         // If authentication failed or was cancelled, re-check enrollment and show settings CTA if needed
-        const stillAvail = await isBiometricAvailable();
+        const stillAvail = await isAuthAvailable();
         setNeedsSetup(!stillAvail);
         return;
       }
+
       // mark we are opening settings so the AppState handler avoids immediate auth
-      try {
-        openedSettingsRef.current = true;
-      } catch (e) {}
+      openedSettingsRef.current = true;
 
       if (Platform.OS === "android") {
         await IntentLauncher.startActivityAsync(
@@ -144,6 +143,7 @@ export default function HomeScreen() {
       }
     } catch (err) {
       console.warn("Failed to open settings", err);
+      // last resort
       Linking.openSettings().catch(() => {});
     }
   };
@@ -187,7 +187,7 @@ export default function HomeScreen() {
                       "Unlock to access your todos"
                     );
                     if (!ok) {
-                      const avail = await isBiometricAvailable();
+                      const avail = await isAuthAvailable();
                       setNeedsSetup(!avail);
                     }
                   }}
