@@ -13,9 +13,11 @@ import * as LocalAuthentication from "expo-local-authentication";
  */
 export async function isBiometricAvailable(): Promise<boolean> {
   try {
-    const hasHardware = await LocalAuthentication.hasHardwareAsync();
+    // Some devices may not report biometric hardware but still have a device
+    // passcode / keyguard set. Treat the device as "auth available" when
+    // the system reports any enrollment (biometric or passcode).
     const isEnrolled = await LocalAuthentication.isEnrolledAsync();
-    return !!(hasHardware && isEnrolled);
+    return !!isEnrolled;
   } catch (err) {
     console.warn("isBiometricAvailable error", err);
     return false;

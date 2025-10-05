@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import {
   View,
   Text,
@@ -8,6 +8,7 @@ import {
   Button,
   Linking,
   AppState,
+  Alert,
 } from "react-native";
 import AddTodo from "../components/addTodo/AddTodo";
 import TodoItem from "../components/todoItem/TodoItem";
@@ -36,6 +37,8 @@ export default function HomeScreen() {
     isSessionAuthenticated()
   );
   const [needsSetup, setNeedsSetup] = useState(false); // show button when user skipped / no lock
+  // track when we opened the system Settings so we can avoid immediate auth prompt on return
+  const openedSettingsRef = useRef(false);
 
   useEffect(() => {
     // subscribe to session auth changes
@@ -62,6 +65,19 @@ export default function HomeScreen() {
       if (next === "active") {
         // if already authenticated no work needed
         if (isSessionAuthenticated()) return;
+
+        // If we just returned from Settings, only re-check whether the device has enrollment
+        // and update the UI (do NOT prompt for auth immediately).
+        if (openedSettingsRef.current) {
+          openedSettingsRef.current = false;
+          try {
+            const avail = await isBiometricAvailable();
+            setNeedsSetup(!avail);
+          } catch (e) {
+            setNeedsSetup(true);
+          }
+          return;
+        }
 
         try {
           // Try to authenticate the user immediately when they return
@@ -97,6 +113,28 @@ export default function HomeScreen() {
 
   const goToSettings = async () => {
     try {
+      // Only navigate to settings if device does not have auth enrolled.
+      // This prevents opening Settings unnecessarily and triggering auth popups.
+      const avail = await isBiometricAvailable();
+      if (avail) {
+        // If device auth is already present, prompt the user to authenticate
+        // (do not navigate to Settings). This allows unlocking instead of opening Settings.
+        const ok = await ensureSessionAuth("Unlock to access your todos");
+        if (ok) {
+          setNeedsSetup(false);
+          return;
+        }
+
+        // If authentication failed or was cancelled, re-check enrollment and show settings CTA if needed
+        const stillAvail = await isBiometricAvailable();
+        setNeedsSetup(!stillAvail);
+        return;
+      }
+      // mark we are opening settings so the AppState handler avoids immediate auth
+      try {
+        openedSettingsRef.current = true;
+      } catch (e) {}
+
       if (Platform.OS === "android") {
         await IntentLauncher.startActivityAsync(
           IntentLauncher.ActivityAction.SECURITY_SETTINGS
